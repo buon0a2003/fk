@@ -7,8 +7,23 @@ $Error.Clear()
 $FKExePath = "D:\fk\dist\fk.exe"
 
 function fk {
-    param([switch]$y)
+    param(
+        [Parameter(Position=0)]
+        [string]$Subcommand,
+        [Parameter(Position=1)]
+        [string]$Key,
+        [Parameter(Position=2)]
+        [string]$Value,
+        [switch]$y
+    )
     
+    # Handle config subcommand
+    if ($Subcommand -eq "config") {
+        fk-config -Key $Key -Value $Value
+        return
+    }
+    
+    # Handle main fix command (original behavior)
     $last = (Get-History -Count 1).CommandLine
     $err = if ($Error.Count -gt 0) { $Error[0] | Out-String } else { "" }
 
@@ -26,6 +41,7 @@ function fk {
     $cmdB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($last))
     $errB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($err))
 
+    # Call Python script instead of exe
     $json = & $FKExePath --shell "powershell" --cmd-b64 $cmdB64 --err-b64 $errB64
 
     if ($LASTEXITCODE -ne 0) { 
@@ -40,14 +56,41 @@ function fk {
     }
 
     Write-Host "→ $($obj.command)" -ForegroundColor Green
-    if (-not $y) {
+    
+    $shouldAutoConfirm = $y -or $obj.auto_confirm
+    
+    if (-not $shouldAutoConfirm) {
         $ans = Read-Host "Run the command? [y/N]"
         if ($ans -notin @('y', 'Y')) { return }
     }
+
     Invoke-Expression $obj.command
 
     Clear-Variable -Name last, err -ErrorAction SilentlyContinue
     $Error.Clear()
+}
+
+function fk-config {
+    param(
+        [string]$Key,
+        [string]$Value
+    )
+    
+    if (-not $Key) {
+        # Show all configuration
+        Write-Host "Current configuration:" -ForegroundColor Cyan
+        & $FKExePath config
+        return
+    }
+    
+    if (-not $Value) {
+        # Show specific key
+        & $FKExePath config $Key
+        return
+    }
+    
+    # Set configuration value
+    & $FKExePath config $Key $Value
 }
 
 function nativeOutput {
@@ -84,3 +127,8 @@ function nativeOutput {
 
 # FK Tool installed and ready to use!
 # Use 'fk' after any failed command to get AI-powered fixes
+# Use 'fk config' to manage configuration settings
+# Examples:
+#   fk config                    # Show all config
+#   fk config temperature        # Show temperature setting
+#   fk config temperature 1.5    # Set temperature to 1.5
