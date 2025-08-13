@@ -1,15 +1,11 @@
-# C:\tools\fk\fk.py
+#!/usr/bin/env python3
 import argparse, base64, json, os, re, sys
+from pathlib import Path
 
 # --- Gemini client (google-genai) ---
 from google import genai
 from google.genai import types
 API_KEY = os.environ.get("GEMINI_API_KEY")
-# API_KEY = "AIzaSyA4bkq1M-Fb9bGUpDWWVU6rK_0Rweqxu7E"
-if not API_KEY:
-    print(json.dumps({"error": "GEMINI_API_KEY is not set"}))
-    sys.exit(2)
-client = genai.Client(api_key=API_KEY)
 
 PROMPT_TMPL = """You are a command-line fixer for {shell} on Windows.
 Given the user's last command and the error output, return ONLY a compact JSON object:
@@ -31,6 +27,123 @@ last_command: ```{last}```
 error_output: ```{err}```
 """
 
+# --- Configuration management ---
+def get_config_path():
+    """Get the path to the config file"""
+    home = Path.home()
+    config_dir = home / ".config" / "fk"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "config.json"
+
+def load_config():
+    """Load configuration from file"""
+    config_path = get_config_path()
+    default_config = {
+        "temperature": 1.2,
+        "max_output_tokens": 1024,
+        "auto_confirm": False,
+        "model": "gemini-2.5-flash"
+    }
+    
+    if not config_path.exists():
+        return default_config
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        # Merge with defaults to handle missing keys
+        for key, value in default_config.items():
+            if key not in config:
+                config[key] = value
+        return config
+    except (json.JSONDecodeError, IOError):
+        return default_config
+
+def save_config(config):
+    """Save configuration to file"""
+    config_path = get_config_path()
+    try:
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+def validate_config_value(key, value):
+    """Validate configuration values"""
+    if key == "temperature":
+        try:
+            temp = float(value)
+            if 0.0 <= temp <= 2.0:
+                return temp
+            else:
+                raise ValueError("Temperature must be between 0.0 and 2.0")
+        except ValueError as e:
+            if "could not convert" in str(e):
+                raise ValueError("Temperature must be a number")
+            raise
+    elif key == "max_output_tokens":
+        try:
+            tokens = int(value)
+            if 1 <= tokens <= 8192:
+                return tokens
+            else:
+                raise ValueError("Max output tokens must be between 1 and 8192")
+        except ValueError as e:
+            if "invalid literal" in str(e):
+                raise ValueError("Max output tokens must be an integer")
+            raise
+    elif key == "auto_confirm":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            if value.lower() in ["true", "yes", "1", "on"]:
+                return True
+            elif value.lower() in ["false", "no", "0", "off"]:
+                return False
+            else:
+                raise ValueError("Auto confirm must be true/false, yes/no, 1/0, or on/off")
+        raise ValueError("Auto confirm must be a boolean or string")
+    elif key == "model":
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Model must be a non-empty string")
+        return value.strip()
+    else:
+        raise ValueError(f"Unknown configuration key: {key}")
+
+def handle_config_command(args):
+    """Handle the config subcommand"""
+    config = load_config()
+    
+    if not args.key:
+        # Show all configuration
+        print("Current configuration:")
+        for key, value in config.items():
+            print(f"  {key}: {value}")
+        return
+    
+    if not args.value:
+        # Show specific key
+        if args.key in config:
+            print(f"{args.key}: {config[args.key]}")
+        else:
+            print(f"Unknown configuration key: {args.key}")
+            sys.exit(1)
+        return
+    
+    # Set configuration value
+    try:
+        validated_value = validate_config_value(args.key, args.value)
+        config[args.key] = validated_value
+        if save_config(config):
+            print(f"Configuration updated: {args.key} = {validated_value}")
+        else:
+            print("Error: Could not save configuration")
+            sys.exit(1)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
 def b64dec(s): 
     return base64.b64decode(s.encode('utf-8')).decode('utf-8') if s else ""
 
@@ -45,12 +158,50 @@ def extract_json(text: str):
         return None
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Command line fixer for shell commands")
+    
+    # Add subparsers for different commands
+    subparsers = ap.add_subparsers(dest='command', help='Available commands')
+    
+    # Config subcommand
+    config_parser = subparsers.add_parser('config', help='Manage configuration')
+    config_parser.add_argument('key', nargs='?', help='Configuration key to get/set')
+    config_parser.add_argument('value', nargs='?', help='Configuration value to set')
+    
+    # Main fix command arguments (when no subcommand is used)
     ap.add_argument("--shell", default="powershell")
-    ap.add_argument("--cmd-b64", required=True)
+    ap.add_argument("--cmd-b64")
     ap.add_argument("--err-b64", default="")
-    ap.add_argument("--model", default="gemini-2.5-flash")
+    ap.add_argument("--model")
+    ap.add_argument("--temperature", type=float)
+    ap.add_argument("--max-output-tokens", type=int)
+    ap.add_argument("--auto-confirm", action="store_true")
+    
     args = ap.parse_args()
+    
+    # Handle config subcommand
+    if args.command == 'config':
+        handle_config_command(args)
+        return
+    
+    # For the main fix command, require cmd-b64 and API key
+    if not args.cmd_b64:
+        ap.error("--cmd-b64 is required for the fix command")
+    
+    if not API_KEY:
+        print(json.dumps({"error": "GEMINI_API_KEY is not set"}))
+        sys.exit(2)
+    
+    client = genai.Client(api_key=API_KEY)
+    
+    # Load configuration
+    config = load_config()
+    
+    # Use command line args or fall back to config values
+    model = args.model or config["model"]
+    temperature = args.temperature if args.temperature is not None else config["temperature"]
+    max_output_tokens = getattr(args, 'max_output_tokens') if getattr(args, 'max_output_tokens') is not None else config["max_output_tokens"]
+    auto_confirm = args.auto_confirm or config["auto_confirm"]
 
     last = b64dec(args.cmd_b64)
     err = b64dec(args.err_b64)
@@ -58,9 +209,9 @@ def main():
 
     try:
         resp = client.models.generate_content(
-            model=args.model,
+            model=model,
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=1.2, max_output_tokens=1024)
+            config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_output_tokens)
         )
         text = getattr(resp, "text", "") or ""
         data = extract_json(text) or {}
@@ -79,8 +230,11 @@ def main():
     #     print(json.dumps({"command": "", "reason": "Blocked potentially destructive command"}))
     #     return
 
-    # Output strict JSON for PowerShell to parse
-    print(json.dumps({"command": cmd, "reason": reason}))
+    # Output strict JSON for PowerShell to parse, including auto_confirm setting
+    output = {"command": cmd, "reason": reason}
+    if auto_confirm:
+        output["auto_confirm"] = True
+    print(json.dumps(output))
 
 if __name__ == "__main__":
     main()
