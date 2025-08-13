@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-import argparse, base64, json, os, re, sys
+import argparse
+import base64
+import json
+import os
+import re
+import sys
 from pathlib import Path
 
 # --- Gemini client (google-genai) ---
@@ -28,12 +33,15 @@ error_output: ```{err}```
 """
 
 # --- Configuration management ---
+
+
 def get_config_path():
     """Get the path to the config file"""
     home = Path.home()
     config_dir = home / ".config" / "fk"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / "config.json"
+
 
 def load_config():
     """Load configuration from file"""
@@ -44,10 +52,10 @@ def load_config():
         "auto_confirm": False,
         "model": "gemini-2.5-flash"
     }
-    
+
     if not config_path.exists():
         return default_config
-    
+
     try:
         with open(config_path, 'r') as f:
             config = json.load(f)
@@ -59,6 +67,7 @@ def load_config():
     except (json.JSONDecodeError, IOError):
         return default_config
 
+
 def save_config(config):
     """Save configuration to file"""
     config_path = get_config_path()
@@ -69,6 +78,7 @@ def save_config(config):
     except IOError:
         return False
 
+
 def validate_config_value(key, value):
     """Validate configuration values"""
     if key == "temperature":
@@ -77,7 +87,7 @@ def validate_config_value(key, value):
             if 0.0 <= temp <= 2.0:
                 return temp
             else:
-                raise ValueError("Temperature must be between 0.0 and 2.0")
+                raise ValueError("Between 0.0 and 2.0")
         except ValueError as e:
             if "could not convert" in str(e):
                 raise ValueError("Temperature must be a number")
@@ -88,7 +98,8 @@ def validate_config_value(key, value):
             if 1 <= tokens <= 8192:
                 return tokens
             else:
-                raise ValueError("Max output tokens must be between 1 and 8192")
+                raise ValueError(
+                    "Max output tokens must be between 1 and 8192")
         except ValueError as e:
             if "invalid literal" in str(e):
                 raise ValueError("Max output tokens must be an integer")
@@ -102,72 +113,81 @@ def validate_config_value(key, value):
             elif value.lower() in ["false", "no", "0", "off"]:
                 return False
             else:
-                raise ValueError("Auto confirm must be true/false, yes/no, 1/0, or on/off")
-        raise ValueError("Auto confirm must be a boolean or string")
+                raise ValueError(
+                    "Phải là true/false, yes/no, 1/0, on/off")
+        raise ValueError("Phải là boolean hoặc string")
     elif key == "model":
         if not isinstance(value, str) or not value.strip():
-            raise ValueError("Model must be a non-empty string")
+            raise ValueError("Không được để trống")
         return value.strip()
     else:
-        raise ValueError(f"Unknown configuration key: {key}")
+        raise ValueError(f"Không tìm thấy: {key}")
+
 
 def handle_config_command(args):
     """Handle the config subcommand"""
     config = load_config()
-    
+
     if not args.key:
         # Show all configuration
-        print("Current configuration:")
+        print("Cấu hình hiện tại:")
         for key, value in config.items():
             print(f"  {key}: {value}")
         return
-    
+
     if not args.value:
         # Show specific key
         if args.key in config:
             print(f"{args.key}: {config[args.key]}")
         else:
-            print(f"Unknown configuration key: {args.key}")
+            print(f"Không tìm thấy cấu hình: {args.key}")
             sys.exit(1)
         return
-    
+
     # Set configuration value
     try:
         validated_value = validate_config_value(args.key, args.value)
         config[args.key] = validated_value
         if save_config(config):
-            print(f"Configuration updated: {args.key} = {validated_value}")
+            print(f"Đã cập nhật: {args.key} = {validated_value}")
         else:
-            print("Error: Could not save configuration")
+            print("Lỗi: Không thể lưu")
             sys.exit(1)
     except ValueError as e:
-        print(f"Error: {e}")
+        print(f"Lỗi: {e}")
         sys.exit(1)
 
-def b64dec(s): 
+
+def b64dec(s):
     return base64.b64decode(s.encode('utf-8')).decode('utf-8') if s else ""
+
 
 def extract_json(text: str):
     # try to find first {...} JSON block
     m = re.search(r'\{.*\}', text, flags=re.S)
-    if not m: 
+    if not m:
         return None
     try:
         return json.loads(m.group(0))
     except Exception:
         return None
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Command line fixer for shell commands")
-    
+    ap = argparse.ArgumentParser(
+        description="Công cụ sửa lỗi dòng lệnh Powershell")
+
     # Add subparsers for different commands
-    subparsers = ap.add_subparsers(dest='command', help='Available commands')
-    
+    subparsers = ap.add_subparsers(dest='command', help='Các lệnh có sẵn')
+
     # Config subcommand
-    config_parser = subparsers.add_parser('config', help='Manage configuration')
-    config_parser.add_argument('key', nargs='?', help='Configuration key to get/set')
-    config_parser.add_argument('value', nargs='?', help='Configuration value to set')
-    
+    config_parser = subparsers.add_parser(
+        'config', help='Quản lý cấu hình')
+    config_parser.add_argument(
+        'key', nargs='?', help='Cấu hình')
+    config_parser.add_argument(
+        'value', nargs='?', help='Giá trị')
+
     # Main fix command arguments (when no subcommand is used)
     ap.add_argument("--shell", default="powershell")
     ap.add_argument("--cmd-b64")
@@ -176,31 +196,32 @@ def main():
     ap.add_argument("--temperature", type=float)
     ap.add_argument("--max-output-tokens", type=int)
     ap.add_argument("--auto-confirm", action="store_true")
-    
+
     args = ap.parse_args()
-    
+
     # Handle config subcommand
     if args.command == 'config':
         handle_config_command(args)
         return
-    
+
     # For the main fix command, require cmd-b64 and API key
     if not args.cmd_b64:
-        ap.error("--cmd-b64 is required for the fix command")
-    
+        ap.error("--cmd-b64 is required")
+
     if not API_KEY:
         print(json.dumps({"error": "GEMINI_API_KEY is not set"}))
         sys.exit(2)
-    
+
     client = genai.Client(api_key=API_KEY)
-    
+
     # Load configuration
     config = load_config()
-    
+
     # Use command line args or fall back to config values
     model = args.model or config["model"]
     temperature = args.temperature if args.temperature is not None else config["temperature"]
-    max_output_tokens = getattr(args, 'max_output_tokens') if getattr(args, 'max_output_tokens') is not None else config["max_output_tokens"]
+    max_output_tokens = getattr(args, 'max_output_tokens') if getattr(
+        args, 'max_output_tokens') is not None else config["max_output_tokens"]
     auto_confirm = args.auto_confirm or config["auto_confirm"]
 
     last = b64dec(args.cmd_b64)
@@ -211,7 +232,8 @@ def main():
         resp = client.models.generate_content(
             model=model,
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_output_tokens)
+            config=types.GenerateContentConfig(
+                temperature=temperature, max_output_tokens=max_output_tokens)
         )
         text = getattr(resp, "text", "") or ""
         data = extract_json(text) or {}
@@ -223,7 +245,8 @@ def main():
     reason = (data.get("reason") or "").strip()
 
     if not cmd:
-        print(json.dumps({"command": "", "reason": reason or "No confident fix"}))
+        print(json.dumps(
+            {"command": "", "reason": reason or "No confident fix"}))
         return
 
     # if is_dangerous(cmd):
@@ -235,6 +258,7 @@ def main():
     if auto_confirm:
         output["auto_confirm"] = True
     print(json.dumps(output))
+
 
 if __name__ == "__main__":
     main()

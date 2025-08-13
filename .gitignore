@@ -1,5 +1,6 @@
 .env
 .venv
+venv
 .vscode
 .DS_Store
 .idea
@@ -9,3 +10,6 @@
 .env
 .venv
 .vscode
+build
+dist
+*.spec
