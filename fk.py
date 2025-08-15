@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import base64
 import json
@@ -7,7 +6,6 @@ import re
 import sys
 from pathlib import Path
 
-# --- Gemini client (google-genai) ---
 from google import genai
 from google.genai import types
 API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -31,9 +29,6 @@ Input:
 last_command: ```{last}```
 error_output: ```{err}```
 """
-
-# --- Configuration management ---
-
 
 def get_config_path():
     """Get the path to the config file"""
@@ -59,7 +54,6 @@ def load_config():
     try:
         with open(config_path, 'r') as f:
             config = json.load(f)
-        # Merge with defaults to handle missing keys
         for key, value in default_config.items():
             if key not in config:
                 config[key] = value
@@ -129,14 +123,12 @@ def handle_config_command(args):
     config = load_config()
 
     if not args.key:
-        # Show all configuration
         print("Cấu hình hiện tại:")
         for key, value in config.items():
             print(f"  {key}: {value}")
         return
 
     if not args.value:
-        # Show specific key
         if args.key in config:
             print(f"{args.key}: {config[args.key]}")
         else:
@@ -144,7 +136,6 @@ def handle_config_command(args):
             sys.exit(1)
         return
 
-    # Set configuration value
     try:
         validated_value = validate_config_value(args.key, args.value)
         config[args.key] = validated_value
@@ -163,7 +154,6 @@ def b64dec(s):
 
 
 def extract_json(text: str):
-    # try to find first {...} JSON block
     m = re.search(r'\{.*\}', text, flags=re.S)
     if not m:
         return None
@@ -177,10 +167,8 @@ def main():
     ap = argparse.ArgumentParser(
         description="Công cụ sửa lỗi dòng lệnh Powershell")
 
-    # Add subparsers for different commands
     subparsers = ap.add_subparsers(dest='command', help='Các lệnh có sẵn')
 
-    # Config subcommand
     config_parser = subparsers.add_parser(
         'config', help='Quản lý cấu hình')
     config_parser.add_argument(
@@ -188,7 +176,6 @@ def main():
     config_parser.add_argument(
         'value', nargs='?', help='Giá trị')
 
-    # Main fix command arguments (when no subcommand is used)
     ap.add_argument("--shell", default="powershell")
     ap.add_argument("--cmd-b64")
     ap.add_argument("--err-b64", default="")
@@ -199,12 +186,10 @@ def main():
 
     args = ap.parse_args()
 
-    # Handle config subcommand
     if args.command == 'config':
         handle_config_command(args)
         return
 
-    # For the main fix command, require cmd-b64 and API key
     if not args.cmd_b64:
         ap.error("--cmd-b64 is required")
 
@@ -214,10 +199,8 @@ def main():
 
     client = genai.Client(api_key=API_KEY)
 
-    # Load configuration
     config = load_config()
 
-    # Use command line args or fall back to config values
     model = args.model or config["model"]
     temperature = args.temperature if args.temperature is not None else config["temperature"]
     max_output_tokens = getattr(args, 'max_output_tokens') if getattr(
@@ -253,7 +236,6 @@ def main():
     #     print(json.dumps({"command": "", "reason": "Blocked potentially destructive command"}))
     #     return
 
-    # Output strict JSON for PowerShell to parse, including auto_confirm setting
     output = {"command": cmd, "reason": reason}
     if auto_confirm:
         output["auto_confirm"] = True
