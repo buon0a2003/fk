@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -134,16 +134,26 @@ function Install-FKFunctions {
     $fkFunctions = @"
 # FK (Fix Command) Tool - Auto-installed $(Get-Date)
 `$Error.Clear()
-$(if ($isPython) {
-"`$FKPythonPath = `"$ExePath`""
-"`$FKExePath = `"python`""
-} else {
-"`$FKExePath = `"$ExePath`""
-})
+`$FKExePath = `"$ExePath`"
 
 function fk {
-    param([switch]`$y)
+    param(
+        [Parameter(Position=0)]
+        [string]`$Subcommand,
+        [Parameter(Position=1)]
+        [string]`$Key,
+        [Parameter(Position=2)]
+        [string]`$Value,
+        [switch]`$y
+    )
     
+    # Handle config subcommand
+    if (`$Subcommand -eq "config") {
+        fk-config -Key `$Key -Value `$Value
+        return
+    }
+    
+    # Handle main fix command (original behavior)
     `$last = (Get-History -Count 1).CommandLine
     `$err = if (`$Error.Count -gt 0) { `$Error[0] | Out-String } else { "" }
 
@@ -162,7 +172,7 @@ function fk {
     `$errB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(`$err))
 
 $(if ($isPython) {
-"    `$json = & `$FKExePath `$FKPythonPath --shell `"powershell`" --cmd-b64 `$cmdB64 --err-b64 `$errB64"
+"    `$json = & python `$FKExePath --shell `"powershell`" --cmd-b64 `$cmdB64 --err-b64 `$errB64"
 } else {
 "    `$json = & `$FKExePath --shell `"powershell`" --cmd-b64 `$cmdB64 --err-b64 `$errB64"
 })
@@ -179,14 +189,54 @@ $(if ($isPython) {
     }
 
     Write-Host "→ `$(`$obj.command)" -ForegroundColor Green
-    if (-not `$y) {
+    
+    # Check if auto_confirm is enabled in config or if -y flag is used
+    `$shouldAutoConfirm = `$y -or `$obj.auto_confirm
+    
+    if (-not `$shouldAutoConfirm) {
         `$ans = Read-Host "Run the command? [y/N]"
         if (`$ans -notin @('y', 'Y')) { return }
     }
+
     Invoke-Expression `$obj.command
 
     Clear-Variable -Name last, err -ErrorAction SilentlyContinue
     `$Error.Clear()
+}
+
+function fk-config {
+    param(
+        [string]`$Key,
+        [string]`$Value
+    )
+    
+    if (-not `$Key) {
+        # Show all configuration
+        Write-Host "Current configuration:" -ForegroundColor Cyan
+$(if ($isPython) {
+"        & python `$FKExePath config"
+} else {
+"        & `$FKExePath config"
+})
+        return
+    }
+    
+    if (-not `$Value) {
+        # Show specific key
+$(if ($isPython) {
+"        & `$FKExePath config `$Key"
+} else {
+"        & `$FKExePath config `$Key"
+})
+        return
+    }
+    
+    # Set configuration value
+$(if ($isPython) {
+"    & python `$FKExePath config `$Key `$Value"
+} else {
+"    & `$FKExePath config `$Key `$Value"
+})
 }
 
 function nativeOutput {
@@ -223,6 +273,11 @@ function nativeOutput {
 
 # FK Tool installed and ready to use!
 # Use 'fk' after any failed command to get AI-powered fixes
+# Use 'fk config' to manage configuration settings
+# Examples:
+#   fk config                    # Show all config
+#   fk config temperature        # Show temperature setting
+#   fk config temperature 1.5    # Set temperature to 1.5
 "@
 
     try {
@@ -282,23 +337,25 @@ function nativeOutput {
         
         $newContent | Set-Content -Path $profilePath -Encoding UTF8
         Write-ColoredOutput "✓ FK functions added to PowerShell profile: $profilePath" "Success"
-        return $true
+        
+        # Return the profile path so it can be used by the calling function
+        return @{ Success = $true; ProfilePath = $profilePath }
     }
     catch {
         Write-ColoredOutput "✗ Failed to update PowerShell profile: $($_.Exception.Message)" "Error"
-        return $false
+        return @{ Success = $false; ProfilePath = $null }
     }
 }
 
 function Test-FKInstallation {
+    param([string]$ProfilePath)
+    
     try {
         Write-ColoredOutput "`nTesting FK installation..." "Info"
         
-        # Source the profile to test - specifically Microsoft.PowerShell_profile.ps1
-        $profileDir = Split-Path $PROFILE.CurrentUserCurrentHost -Parent
-        $profilePath = Join-Path $profileDir "Microsoft.PowerShell_profile.ps1"
-        if (Test-Path $profilePath) {
-            . $profilePath
+        # Source the profile to test
+        if (Test-Path $ProfilePath) {
+            . $ProfilePath
         }
         
         # Test if fk command exists
@@ -337,14 +394,16 @@ function Start-Installation {
     
     # Step 3: Install FK functions
     Write-ColoredOutput "`nStep 3: Installing FK functions to PowerShell profile..." "Info"
-    if (-not (Install-FKFunctions -ExePath $exePath)) {
+    $installResult = Install-FKFunctions -ExePath $exePath
+    if (-not $installResult.Success) {
         Write-ColoredOutput "Failed to install FK functions. Installation aborted." "Error"
         exit 1
     }
+    $profilePath = $installResult.ProfilePath
     
     # Step 4: Test installation
     Write-ColoredOutput "`nStep 4: Testing installation..." "Info"
-    Test-FKInstallation | Out-Null
+    Test-FKInstallation -ProfilePath $profilePath | Out-Null
     
     # Installation complete
     Write-ColoredOutput "`n=== Installation Complete! ===" "Success"
@@ -354,6 +413,11 @@ function Start-Installation {
     Write-ColoredOutput "  2. Type 'fk' to get an AI-powered fix suggestion" "Info" 
     Write-ColoredOutput "  3. Press 'y' to accept the fix, or 'N' to cancel" "Info"
     Write-ColoredOutput "  4. Use 'fk -y' to auto-accept fixes without prompting" "Info"
+    Write-ColoredOutput "`nConfiguration Management:" "Info"
+    Write-ColoredOutput "  fk config                    # Show all configuration" "Info"
+    Write-ColoredOutput "  fk config temperature        # Show specific setting" "Info"
+    Write-ColoredOutput "  fk config auto_confirm true  # Enable auto-confirm" "Info"
+    Write-ColoredOutput "  fk config model gemini-2.5-flash  # Change AI model" "Info"
     Write-ColoredOutput "`nRestart PowerShell or run '. `$PROFILE' to use FK immediately!" "Warning"
     Write-ColoredOutput "Profile location: $profilePath" "Info"
 }
